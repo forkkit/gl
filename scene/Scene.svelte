@@ -1,11 +1,26 @@
 <script context="module">
 	import { readable } from 'svelte/store';
 
+	function is_intersecting(el) {
+		// TODO this shouldn't be necessary. But the initial value
+		// of entry.isIntersecting in an IO can be incorrect, it
+		// turns out? need to investigate further
+		const bcr = el.getBoundingClientRect();
+
+		return (
+			bcr.bottom > 0 &&
+			bcr.right  > 0 &&
+			bcr.top    < window.innerHeight &&
+			bcr.left   < window.innerWidth
+		);
+	}
+
 	function get_visibility(node) {
 		return readable(false, set => {
 			if (typeof IntersectionObserver !== 'undefined') {
 				const observer = new IntersectionObserver(entries => {
-					set(entries[0].isIntersecting);
+					// set(entries[0].isIntersecting);
+					set(is_intersecting(node));
 				});
 
 				observer.observe(node);
@@ -105,6 +120,7 @@
 	}
 
 	const targets = new Map();
+	let camera_position_changed_since_last_render = true;
 
 	const scene = {
 		defines: [
@@ -137,6 +153,7 @@
 			camera_stores.view.set(camera.view);
 			camera_stores.projection.set(camera.projection);
 
+			camera_position_changed_since_last_render = true;
 			invalidate();
 		},
 
@@ -222,24 +239,22 @@
 
 			let previous_program;
 
-			function render_mesh({ model, model_inverse_transpose, geometry, material, props }) {
+			function render_mesh({ model, model_inverse_transpose, geometry, material }) {
+				// TODO should this even be possible?
+				if (!material) return;
+
 				if (material.depthTest !== false) {
 					gl.enable(gl.DEPTH_TEST);
 				} else {
 					gl.disable(gl.DEPTH_TEST);
 				}
 
-				// TODO...
-				if (material.blend === 'multiply') {
-					gl.blendFuncSeparate(
-						gl.SRC_ALPHA, // source rgb
-						gl.ONE_MINUS_SRC_ALPHA, // dest rgb
-						gl.SRC_ALPHA, // source alpha
-						gl.ONE // dest alpha
-					);
-				} else {
-					gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-				}
+				gl.blendFuncSeparate(
+					gl.SRC_ALPHA, // source rgb
+					gl.ONE_MINUS_SRC_ALPHA, // dest rgb
+					gl.SRC_ALPHA, // source alpha
+					gl.ONE // dest alpha
+				);
 
 				if (material.program !== previous_program) {
 					previous_program = material.program;
@@ -298,10 +313,7 @@
 					gl.drawElements(gl[geometry.primitive], geometry.index.length, gl.UNSIGNED_INT, 0);
 				} else {
 					const primitiveType = gl[geometry.primitive];
-					const offset = 0;
-					const { position } = geometry.attributes;
-					const count = position.count;
-					gl.drawArrays(primitiveType, offset, count);
+					gl.drawArrays(primitiveType, 0, geometry.count);
 				}
 			}
 
@@ -315,21 +327,21 @@
 				gl.clearDepth(1.0);
 				gl.clear(gl.DEPTH_BUFFER_BIT);
 
-				const transparent = [];
-
 				for (let i = 0; i < layer.meshes.length; i += 1) {
-					const mesh = layer.meshes[i];
-
-					if (mesh.transparent) {
-						transparent.push(mesh);
-					} else {
-						render_mesh(mesh);
-					}
+					render_mesh(layer.meshes[i]);
 				}
 
 				// TODO sort transparent meshes, furthest to closest
 				gl.depthMask(false);
-				transparent.sort(furthest_first).forEach(render_mesh);
+
+				if (camera_position_changed_since_last_render || layer.needs_transparency_sort) {
+					sort_transparent_meshes(layer.transparent_meshes);
+					layer.needs_transparency_sort = false;
+				}
+
+				for (let i = 0; i < layer.transparent_meshes.length; i += 1) {
+					render_mesh(layer.transparent_meshes[i]);
+				}
 
 				for (let i = 0; i < layer.child_layers.length; i += 1) {
 					render_layer(layer.child_layers[i]);
@@ -337,20 +349,37 @@
 			}
 
 			render_layer(root_layer);
+			camera_position_changed_since_last_render = false;
 		};
 
 		// for some wacky reason, Adblock Plus seems to prevent the
 		// initial dimensions from being correctly reported
-		setTimeout(() => {
+		const timeout = setTimeout(() => {
 			$width = canvas.clientWidth;
 			$height = canvas.clientHeight;
 		});
 
 		tick().then(() => draw(true));
+
+		return () => {
+			gl.getExtension('WEBGL_lose_context').loseContext();
+			clearTimeout(timeout);
+		};
 	});
 
-	// element 14 represents the z position of the model
-	const furthest_first = (a, b) => a.model[14] - b.model[14];
+	const sort_transparent_meshes = meshes => {
+		if (meshes.length < 2) return;
+
+		const lookup = new Map();
+		const out = new Float32Array(16);
+
+		meshes.forEach(mesh => {
+			const z = mat4.multiply(out, camera.view, mesh.model)[14];
+			lookup.set(mesh, z);
+		});
+
+		meshes.sort((a, b) => lookup.get(a) - lookup.get(b));
+	};
 
 	let dimensions_need_update = true;
 

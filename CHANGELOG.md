@@ -1,5 +1,35 @@
 # @sveltejs/gl changelog
 
+## 0.0.30
+
+* Add `snap` prop to `<Overlay>` components, to snap to pixel
+
+## 0.0.29
+
+* Default to sensible blending
+
+## 0.0.28
+
+* Fix `alpha` uniform behaviour in default shader when using `colormap`
+* Fix rendering of non-indexed geometry
+
+## 0.0.27
+
+* Add `<GL.Point>` component
+* Add `emissive` and `emissivemap` uniforms to default material
+
+## 0.0.26
+
+* Fix sorting of transparent meshes ([#16](https://github.com/sveltejs/gl/issues/16))
+
+## 0.0.25
+
+* Lose context when scene is destroyed
+
+## 0.0.24
+
+* Work around apparent IntersectionObserver bug
+
 ## 0.0.23
 
 * Render on entering viewport
